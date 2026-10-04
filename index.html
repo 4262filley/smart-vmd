@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>スマートVMD</title>
+    <style>
+
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      label { display: inline-block; width: 100px; }
+      .input-group { margin-bottom: 8px; }
+      ul { list-style: none; padding: 0; }
+      li { background: #f4f4f4; margin: 5px 0; padding: 8px 12px; display: flex; justify-content: space-between; width: 420px; align-items: center; }
+      .delete-btn { color: red; cursor: pointer; }
+      .sold-plus, .stock-plus { cursor: pointer; margin-left: 4px; padding: 2px 6px; }
+
+      /* 棚表示エリアのレイアウト */
+      .shelves-container {
+        display: flex;
+        gap: 15px;
+        margin-top: 15px;
+      }
+      .shelf-card {
+        flex: 1;
+        padding: 12px;
+        border-radius: 6px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      }
+      .shelf-card h4 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+      }
+      .shelf-card ul {
+        padding: 0;
+        margin: 0;
+        list-style: none;
+        font-size: 12px;
+        font-weight: bold;
+        max-height: 300px; /* 件数増加に伴い高さを拡張 */
+        overflow-y: auto;
+      }
+      .shelf-card li {
+        width: auto;
+        background: transparent;
+        padding: 4px 0;
+        border-bottom: 1px dashed rgba(0,0,0,0.1);
+      }
+
+      /* 個別カラー設定 */
+      #card-main { background: #fffde7; border: 2px solid #ffe082; }
+      #card-main h4 { color: #b78103; }
+
+      #card-sub { background: #e8f5e9; border: 2px solid #a5d6a7; }
+      #card-sub h4 { color: #2e7d32; }
+
+      #card-stock { background: #eceff1; border: 2px solid #b0bec5; }
+      #card-stock h4 { color: #37474f; }
+    </style>
+  </head>
+  <body>
+    <h1>スマートVMD</h1>
+
+    <!-- 本社からの指示書エリア -->
+    <h2>本社からのVMD指示書・連絡事項</h2>
+    <div class="input-group" style="margin-bottom: 15px;">
+      <textarea id="headquarter-instruction" rows="3" style="width: 100%; max-width: 600px; padding: 8px;" placeholder="例: アウターBEGは今週の推し商品のため、スコアに関わらずメイン棚へ陳列してください。"></textarea>
+      <br>
+      <button id="save-instruction-btn" style="margin-top: 5px;">指示書を保存</button>
+      <span id="instruction-saved-msg" style="color: green; font-size: 12px; display: none;"> 保存しました</span>
+    </div>
+
+    <!-- 1. 商品データ入力フォーム領域 -->
+    <h2>商品データの入力</h2>
+    <div class="input-group">
+      <label for="productName">商品名:</label>
+      <input type="text" id="productName" placeholder="例: 品番" />
+    </div>
+    <div class="input-group">
+      <label for="category">カテゴリー:</label>
+      <input type="text" id="category" placeholder="例: トップス" />
+    </div>
+    <div class="input-group">
+      <label for="color">カラー:</label>
+      <input type="text" id="color" placeholder="例: WHT" />
+    </div>
+    <div class="input-group">
+      <label for="sold-count">販売数:</label>
+      <input type="number" id="sold-count" value="0" />
+    </div>
+    <div class="input-group">
+      <label for="stock-count">在庫数:</label>
+      <input type="number" id="stock-count" value="0" />
+    </div>
+    <button id="add-btn">商品を追加</button>
+
+    <hr />
+
+    <!-- 2. 追加された商品のリスト表示エリア -->
+    <h2>登録商品一覧</h2>
+    <ul id="product-list">
+      <!-- ここにJavaScriptで動的にli要素の追加 -->
+    </ul>
+
+    <!-- 3. 店舗陳列提案エリア -->
+    <h2>推奨陳列棚</h2>
+
+    <div class="shelves-container">
+      <!-- メイン棚 -->
+      <div id="card-main" class="shelf-card">
+        <h4>★ メイン棚 (最大15件)</h4>
+        <ul id="main-shelf"></ul>
+      </div>
+
+      <!-- サブ棚 -->
+      <div id="card-sub" class="shelf-card">
+        <h4>◆ サブ棚 (最大20件)</h4>
+        <ul id="sub-shelf"></ul>
+      </div>
+
+      <!-- 保留・ストック -->
+      <div id="card-stock" class="shelf-card">
+        <h4>▼ 保留・ストック</h4>
+        <ul id="stock-shelf"></ul>
+      </div>
+    </div>
+
+    <!-- JavaScript処理 -->
+    <script>
+      // ① HTML要素の取得
+      const productNameInput = document.getElementById('productName');
+      const categoryInput = document.getElementById('category');
+      const colorInput = document.getElementById('color');
+      const soldCountInput = document.getElementById('sold-count');
+      const stockCountInput = document.getElementById('stock-count');
+      const addBtn = document.getElementById('add-btn');
+      const productList = document.getElementById('product-list');
+
+      const hqInstructionInput = document.getElementById('headquarter-instruction');
+      const saveInstructionBtn = document.getElementById('save-instruction-btn');
+      const instructionSavedMsg = document.getElementById('instruction-saved-msg');
+
+      // 商品データを保持する配列
+      let products = [];
+
+      // 起動時に Cookie からデータを復元・描画
+      loadFromCookie();
+      renderList();
+
+      // 指示書保存ボタン押下時
+      saveInstructionBtn.addEventListener('click', function() {
+        const text = hqInstructionInput.value;
+        document.cookie = `vmd_instruction=${encodeURIComponent(text)}; max-age=${60*60*24*365*10}; path=/`;
+        
+        instructionSavedMsg.style.display = 'inline';
+        setTimeout(() => { instructionSavedMsg.style.display = 'none'; }, 2000);
+      });
+
+      // ② 追加ボタンが押されたときの処理
+      addBtn.addEventListener('click', function () {
+        const name = productNameInput.value;
+        const category = categoryInput.value;
+        const color = colorInput.value;
+        const sold = Number(soldCountInput.value);
+        const stock = Number(stockCountInput.value);
+
+        if (name === '') {
+          alert('商品名を入力してください。');
+          return;
+        }
+
+        const score = (sold / (stock + 1)).toFixed(2);
+
+        const product = {
+          id: Date.now(),
+          name: name,
+          category: category,
+          color: color,
+          sold: sold,
+          stock: stock,
+          score: Number(score)
+        };
+
+        products.push(product);
+
+        saveToCookie();
+        renderList();
+
+        productNameInput.value = '';
+        categoryInput.value = '';
+        colorInput.value = '';
+        soldCountInput.value = '0';
+        stockCountInput.value = '0';
+      });
+
+      // ③ 販売数を変更
+      function updateSold(id, amount) {
+        const product = products.find((p) => p.id === id);
+        if (product) {
+          product.sold = Math.max(0, product.sold + amount);
+          if (amount > 0 && product.stock > 0) {
+            product.stock -= 1;
+          }
+          product.score = Number((product.sold / (product.stock + 1)).toFixed(2));
+
+          saveToCookie();
+          renderList();
+        }
+      }
+
+      // ④ 在庫数を変更
+      function updateStock(id, amount) {
+        const product = products.find((p) => p.id === id);
+        if (product) {
+          product.stock = Math.max(0, product.stock + amount);
+          product.score = Number((product.sold / (product.stock + 1)).toFixed(2));
+
+          saveToCookie();
+          renderList();
+        }
+      }
+
+      // ⑤ 一覧リスト ＆ 棚表示を描画する関数
+      function renderList() {
+        productList.innerHTML = '';
+
+        // スコアが高い順（降順）に並び替え
+        products.sort((a, b) => b.score - a.score);
+
+        // マップ上の棚リストをリセット
+        const mainShelf = document.getElementById('main-shelf');
+        const subShelf = document.getElementById('sub-shelf');
+        const stockShelf = document.getElementById('stock-shelf');
+        if (mainShelf) mainShelf.innerHTML = '';
+        if (subShelf) subShelf.innerHTML = '';
+        if (stockShelf) stockShelf.innerHTML = '';
+
+        products.forEach((product, index) => {
+          const li = document.createElement('li');
+          const colorText = product.color ? ` / カラー: ${product.color}` : '';
+
+          // 順位（index）から現在の陳列場所を割り出し
+          let shelfLocation = '';
+          let shelfColor = '';
+
+          // ★ 個数設定（メイン: 15件、サブ: 20件（計35件目まで））
+          if (index < 15) {
+            shelfLocation = '★ メイン棚（入口正面）';
+            shelfColor = '#b78103';
+            if (mainShelf) mainShelf.innerHTML += `<li>・${product.name} (${product.color || '共通'})</li>`;
+          } else if (index < 35) {
+            shelfLocation = '◆ サブ棚（中央）';
+            shelfColor = '#2e7d32';
+            if (subShelf) subShelf.innerHTML += `<li>・${product.name} (${product.color || '共通'})</li>`;
+          } else {
+            shelfLocation = '▼ 保留・ストック';
+            shelfColor = '#37474f';
+            if (stockShelf) stockShelf.innerHTML += `<li>・${product.name} (${product.color || '共通'})</li>`;
+          }
+
+          li.innerHTML = `
+            <span>
+              <strong>${product.name}</strong> (${product.category}${colorText}) 
+              <br><span style="display:inline-block; padding:2px 6px; background:#eee; border-radius:3px; font-weight:bold; color:${shelfColor}; font-size:12px; margin:2px 0;">
+                陳列先: ${shelfLocation}
+              </span>
+              <br>販売: ${product.sold} 個 <button class="sold-plus">+1</button> 
+              / 在庫: ${product.stock} 個 <button class="stock-plus">+1</button>
+              <br><small style="color: blue;">★ 提案スコア: ${product.score}</small>
+            </span>
+            <button class="delete-btn">削除</button>
+          `;
+
+          // イベント設定
+          li.querySelector('.sold-plus').addEventListener('click', () => updateSold(product.id, 1));
+          li.querySelector('.stock-plus').addEventListener('click', () => updateStock(product.id, 1));
+          li.querySelector('.delete-btn').addEventListener('click', () => {
+            products = products.filter((p) => p.id !== product.id);
+            saveToCookie();
+            renderList();
+          });
+
+          productList.appendChild(li);
+        });
+      }
+
+      // ⑥ Cookie 保存処理
+      function saveToCookie() {
+        const jsonString = JSON.stringify(products);
+        const maxAge = 60 * 60 * 24 * 365 * 10;
+        document.cookie = `vmd_products=${encodeURIComponent(jsonString)}; max-age=${maxAge}; path=/`;
+      }
+
+      // ⑦ Cookie 読み込み処理
+      function loadFromCookie() {
+        const cookies = document.cookie.split('; ');
+        for (let cookie of cookies) {
+          const [key, value] = cookie.split('=');
+          if (key === 'vmd_products') {
+            try { products = JSON.parse(decodeURIComponent(value)); } catch (e) { products = []; }
+          }
+          if (key === 'vmd_instruction') {
+            hqInstructionInput.value = decodeURIComponent(value);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
